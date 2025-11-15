@@ -1,387 +1,336 @@
-# CLAUDE.md - AI Assistant Development Guide
+# CLAUDE.md - AI Assistant Guide for godot-vlc
 
 ## Project Overview
 
-**godot-vlc** is a VLC media player extension for Godot Engine 4.3+. It provides VLC-based video and audio playback capabilities through a Rust-based GDExtension that binds to the libVLC library.
+**godot-vlc** is a Godot Engine extension that integrates VLC media playback functionality into Godot 4.3+. It's written in Rust using the godot-rust (gdext) bindings and provides native VLC video/audio playback capabilities for Windows, Linux, and Steam Deck platforms.
 
-- **License**: LGPL v2.1
-- **Language**: Rust (2021 edition)
+- **Language**: Rust (Edition 2021)
+- **Primary Framework**: godot-rust (gdext) 0.3.5
+- **Build System**: Cargo
+- **Target Platforms**: Windows x86_64, Linux x86_64, Steam Deck
+- **License**: GNU LGPL v2.1+
 - **Current Version**: 1.1.2
-- **Target Platforms**: Windows x86_64, Linux x86_64
-- **Godot Version**: 4.3+ (API compatibility: 4.3 minimum)
 
 ## Repository Structure
 
 ```
 godot-vlc/
-├── src/                              # Rust source code
-│   ├── lib.rs                        # Main library entry point, gdextension registration
-│   ├── vlc_instance.rs               # VLC singleton instance manager
-│   ├── vlc_media.rs                  # VLCMedia resource class
-│   ├── vlc_media_player.rs           # VLCMediaPlayer control node
-│   ├── vlc_track.rs                  # Track information wrapper
-│   ├── vlc_track_list.rs             # Track list management
-│   ├── util.rs                       # Utility functions
-│   └── vlc_media_player/             # Media player submodules
-│       ├── internal_audio_stream.rs
-│       └── internal_audio_stream_playback.rs
-├── thirdparty/vlc/                   # VLC library and headers
-│   ├── include/                      # libVLC C headers
-│   └── lib/                          # Platform-specific VLC libraries
-│       ├── linux-x64/
-│       └── win-x64/
-├── demo/                             # Demo Godot project
-│   ├── addons/godot-vlc/             # GDExtension addon files
-│   │   ├── godot_vlc.gdextension     # Extension configuration
-│   │   ├── format_loader.gd          # Custom resource loader for media files
-│   │   └── icons/                    # Editor icons
-│   └── main.tscn                     # Demo scene
-├── scripts/                          # Build scripts (PowerShell)
-│   ├── build_debug.ps1
-│   ├── build_release.ps1
-│   ├── publish.ps1
-│   └── setup.ps1
-├── .github/workflows/                # CI/CD workflows
-│   └── build.yml                     # GitHub Actions build pipeline
-├── Cargo.toml                        # Rust package configuration
-├── build.rs                          # Build script (generates VLC bindings)
-└── README.md                         # User documentation
+├── src/                              # Rust source code (~2090 lines)
+│   ├── lib.rs                       # Extension entry point, registers VLCInstance singleton
+│   ├── vlc_instance.rs              # VLC instance singleton, logging configuration
+│   ├── vlc_media.rs                 # VLCMedia resource class (file/MRL loading)
+│   ├── vlc_media_player.rs          # VLCMediaPlayer control node (main player)
+│   ├── vlc_media_player/
+│   │   ├── internal_audio_stream.rs
+│   │   └── internal_audio_stream_playback.rs
+│   ├── vlc_track.rs                 # Track information wrapper
+│   ├── vlc_track_list.rs            # Track list management
+│   └── util.rs                      # Utility functions (GString/CString conversion)
+├── thirdparty/vlc/                  # VLC library headers and binaries
+│   ├── include/                     # VLC C headers for bindgen
+│   └── lib/                         # Platform-specific VLC libraries
+│       ├── win-x64/                 # Windows VLC binaries
+│       └── linux-x64/               # Linux VLC binaries
+├── demo/                            # Test/demo Godot project
+│   ├── addons/godot-vlc/           # Plugin installation location
+│   │   └── godot_vlc.gdextension   # GDExtension configuration
+│   ├── main.tscn                    # Demo scene
+│   └── test.mp4                     # Test media file
+├── scripts/                         # PowerShell build scripts
+│   ├── build_debug.ps1             # Debug build
+│   ├── build_release.ps1           # Release build
+│   ├── publish.ps1                 # Package for distribution
+│   └── setup.ps1                   # Development setup
+├── build.rs                         # Build script (bindgen for VLC headers)
+├── Cargo.toml                       # Rust dependencies and metadata
+├── Cargo.lock                       # Locked dependencies
+└── .github/workflows/build.yml      # CI/CD pipeline
+
 ```
 
-## Architecture
+## Core Architecture
 
-### Core Components
+### Extension Lifecycle
 
-1. **VLCInstance** (singleton)
-   - Manages the global libVLC instance
-   - Handles VLC logging configuration
-   - Registered as a Godot singleton on Scene init level
-   - Configurable via project settings: `vlc/log_level`, `vlc/arguments`
+The extension follows Godot's GDExtension lifecycle:
 
-2. **VLCMedia** (Resource)
-   - Represents a media file or stream
-   - Can load from:
-     - Godot resources (`res://`)
-     - Filesystem paths (`load_from_file`)
-     - Media Resource Locators (`load_from_mrl`)
-   - Supports metadata parsing, chapters, and track information
+1. **Initialization** (src/lib.rs:42-49): On `InitLevel::Scene`, registers `VLCInstance` as a singleton
+2. **Cleanup** (src/lib.rs:51-63): On deinit, unregisters and frees the singleton
 
-3. **VLCMediaPlayer** (Control node)
-   - Main playback control
-   - Renders video to TextureRect
-   - Handles audio through custom AudioStream
-   - Provides playback controls, volume, position, etc.
+### Key Components
 
-4. **VLCTrack** and **VLCTrackList**
-   - Represent audio/video/subtitle tracks
-   - Allow track selection and information retrieval
+#### 1. VLCInstance (src/vlc_instance.rs)
+- Singleton that owns the libVLC instance
+- Configures logging levels via Project Settings (`vlc/log_level`)
+- Supports custom VLC arguments via Project Settings (`vlc/arguments`)
+- Steam Deck compatibility mode via Project Settings (`vlc/steamdeck_mode`)
+- Auto-detects Steam Deck environment and enables optimizations
+- Provides logging callbacks (debug, info, warning, error)
+- Accessed globally via `vlc_instance::get()`
 
-### Bindings Generation
+#### 2. VLCMedia (src/vlc_media.rs)
+- Godot Resource class for media files
+- Two loading methods:
+  - `load_from_file(path)`: Loads from Godot's virtual filesystem
+  - `load_from_mrl(mrl)`: Loads from media resource locator (URLs, streams)
+- Supports metadata parsing via `parse_request()`
+- Exposes VLC metadata constants (title, artist, duration, etc.)
+- Uses callbacks for custom file I/O (src/vlc_media.rs:430-478)
 
-The project uses `bindgen` to automatically generate Rust FFI bindings from VLC's C headers:
-- Triggered during build via `build.rs`
-- Bindings are written to `$OUT_DIR/vlc_bindings.rs`
-- Included in `lib.rs` via `include!` macro
+#### 3. VLCMediaPlayer (src/vlc_media_player.rs)
+- Godot Control node for video playback
+- Key features:
+  - Video rendering via callbacks to ImageTexture
+  - Audio playback via ring buffer and AudioStreamPlayer
+  - Stretch modes (scale, keep aspect, etc.)
+  - Chapter/title navigation
+  - Track selection (audio, video, subtitles)
+  - Playback control (play, pause, stop, seek)
+- Emits signals: `openning`, `buffering`, `playing`, `paused`, `stopped`, `forward`, `backward`, `stopping`, `video_frame`
+
+### FFI and Unsafe Code
+
+- VLC bindings generated via bindgen in build.rs
+- Extensive use of `unsafe` blocks for VLC C API calls
+- Callback functions bridge VLC events to Godot (video_*_callback, audio_*_callback)
+- Manual memory management for VLC pointers (released in Drop impls)
 
 ## Build System
 
-### Prerequisites
+### Dependencies (Cargo.toml)
 
-- Rust toolchain (2021 edition)
-- Cargo
-- Clang/LLVM (required for bindgen, especially on Windows)
-- PowerShell (for build scripts)
+```toml
+[dependencies]
+godot = {version = "0.3.5", features = ["experimental-threads", "register-docs", "api-4-3"]}
+printf = "0.1.0"      # For VLC log formatting
+ringbuf = "0.4.8"     # Audio buffer
+
+[build-dependencies]
+bindgen = "0.72.1"    # Generate VLC bindings
+```
+
+### Build Process (build.rs)
+
+1. Detects target platform (Windows/Linux x86_64)
+2. Links VLC libraries from `thirdparty/vlc/lib/{platform}`
+3. Generates Rust bindings from `thirdparty/vlc/include/vlc/vlc.h`
+4. Outputs bindings to `OUT_DIR/vlc_bindings.rs` (included in src/lib.rs:32)
 
 ### Build Commands
 
-**Debug Build:**
-```bash
-./scripts/build_debug.ps1
-# or directly:
-cargo build
-```
+- **Debug build**: `cargo build` or `./scripts/build_debug.ps1`
+- **Release build**: `cargo build --release` or `./scripts/build_release.ps1`
+- **Package**: `./scripts/publish.ps1` (creates zip with version from Cargo.toml)
 
-**Release Build:**
-```bash
-./scripts/build_release.ps1
-# or directly:
-cargo build -r
-```
+### Platform-Specific Notes
 
-### Build Configuration
+**Windows**:
+- Requires LLVM/Clang for bindgen (see .github/workflows/build.yml:48-55)
+- Outputs: `godot_vlc.dll`, `godot_vlc.pdb`
+- VLC dependencies: `libvlc.dll`, `libvlccore.dll`, `plugins/`
 
-- **RUSTFLAGS**: Set to `-Clink-arg=-Wl,-rpath,$ORIGIN` for Linux builds (enables finding VLC libraries)
-- **Platform Detection**: `build.rs` detects target platform and sets appropriate library search paths
-- **Output**:
-  - Linux: `libgodot_vlc.so` / `libgodot_vlc_debug.so`
-  - Windows: `godot_vlc.dll` / `godot_vlc_debug.dll` (+ .pdb files)
+**Linux**:
+- Uses system Clang for bindgen
+- Outputs: `libgodot_vlc.so`
+- VLC dependencies: `libvlc.so.12`, `libvlccore.so.9`, `libidn.so.11`, `vlc/`
 
-### Dependencies
+## Development Workflow
 
-**Rust Crates:**
-- `godot = 0.3.5` (features: `experimental-threads`, `register-docs`, `api-4-3`)
-- `printf = 0.1.0` - For VLC log formatting
-- `ringbuf = 0.4.8` - Audio buffer management
-- `bindgen = 0.72.1` (build-time)
+### Setting Up Development Environment
 
-**Native Libraries:**
-- libVLC 3.x (bundled in `thirdparty/vlc/lib/`)
-- Platform-specific VLC dependencies (see `demo/addons/godot-vlc/godot_vlc.gdextension`)
+1. Install Rust (1.75+ recommended for Rust 2021 edition)
+2. Install LLVM/Clang (for bindgen):
+   - Windows: Use KyleMayes/install-llvm-action or install manually
+   - Linux: `sudo apt-get install libclang-dev` (Ubuntu/Debian)
+3. Clone repository
+4. Run `./scripts/setup.ps1` (if available)
+5. Build with `cargo build`
 
-## CI/CD
+### Testing Changes
 
-### GitHub Actions Workflow
+1. Build debug version: `cargo build`
+2. Copy output to demo project:
+   - Windows: Copy `target/debug/godot_vlc.dll` to `demo/addons/godot-vlc/bin/win-x64/godot_vlc_debug.dll`
+   - Linux: Copy `target/debug/libgodot_vlc.so` to `demo/addons/godot-vlc/bin/linux-x64/libgodot_vlc_debug.so`
+3. Open `demo/` in Godot 4.3+
+4. Run `main.tscn` to test playback
 
-`.github/workflows/build.yml` runs on:
-- Push to `master`
-- Pull requests to `master`
+### CI/CD Pipeline
 
-**Jobs:**
-1. `build_linux64` (Ubuntu 22.04)
-   - Builds debug and release
-   - Uploads artifacts to `linux64/`
-
-2. `build_win64` (Windows latest)
-   - Installs LLVM 11.0 for bindgen
-   - Sets LIBCLANG_PATH
-   - Builds debug and release
-   - Uploads artifacts to `win64/`
+GitHub Actions workflow (`.github/workflows/build.yml`):
+- Triggers: Push/PR to `master` branch
+- Two jobs: `build_linux64`, `build_win64`
+- Builds both debug and release versions
+- Uploads artifacts for each platform
 
 ## Code Conventions
 
 ### Rust Style
 
-- **Edition**: 2021
-- **Indentation**: 4 spaces (enforced by `.editorconfig`)
-- **Line Endings**: LF
-- **Charset**: UTF-8
+- **Edition**: Rust 2021
+- **Indentation**: 4 spaces (see .editorconfig)
+- **Line Endings**: LF (Unix-style)
+- **Naming**:
+  - GDExtension classes: PascalCase (e.g., `VlcMediaPlayer`)
+  - Rust structs: PascalCase (e.g., `VlcMedia`)
+  - Functions: snake_case (e.g., `load_from_file`)
+  - Constants: SCREAMING_SNAKE_CASE (e.g., `STATE_PLAYING`)
 
-### File Headers
+### Godot-Specific Conventions
 
-All source files include LGPL license headers:
+- **Class Renaming**: Rust structs use internal names (e.g., `VlcMedia`), exposed to Godot with different names via `#[class(rename=VLCMedia)]`
+- **Signals**: Declared via `#[signal]` macro (src/vlc_media_player.rs:261-278)
+- **Properties**: Use `#[export]` and `#[var(get, set=...)]` macros
+- **Constants**: Exposed via `#[constant]` macro, often casting VLC enums to i32
+
+### Error Handling
+
+- VLC errors often return -1, null pointers, or false
+- Check return values before using (e.g., src/vlc_media.rs:186-189)
+- Use `godot_error!`, `godot_warn!`, `godot_print!` macros for logging
+- Validate instances with `is_instance_valid()` before use
+
+### Memory Management
+
+- VLC pointers released in `Drop` implementations (src/vlc_media_player.rs:193-205)
+- Box raw pointers for opaque data in callbacks
+- Use `Box::into_raw()` to pass Rust data to C callbacks
+- Use `Box::from_raw()` to reclaim ownership in cleanup
+
+### Licensing Headers
+
+All source files include LGPL v2.1+ header (see src/lib.rs:1-18)
+
+## Common Tasks for AI Assistants
+
+### Adding a New VLC Feature
+
+1. Find the corresponding libVLC function in VLC documentation
+2. The binding is auto-generated in `vlc` module (src/lib.rs:31-33)
+3. Add a new method to the appropriate struct (`VlcMedia`, `VlcMediaPlayer`, etc.)
+4. Mark it with `#[func]` to expose to Godot
+5. Add documentation comments (supports Godot's doc format)
+6. Handle unsafe calls and error cases
+7. Test in demo project
+
+Example pattern:
 ```rust
-/*
-* Copyright (c) 2025 xiSage
-*
-* This library is free software; you can redistribute it and/or
-* modify it under the terms of the GNU Lesser General Public
-* License as published by the Free Software Foundation; either
-* version 2.1 of the License, or (at your option) any later version.
-* ...
-*/
-```
-
-### Naming Conventions
-
-- **Rust Modules**: Snake_case (e.g., `vlc_media_player.rs`)
-- **GDExtension Classes**: PascalCase with VLC prefix (e.g., `VLCMediaPlayer`, `VLCMedia`)
-  - Renamed in Godot via `#[class(rename=...)]`
-- **Godot Resources**: Use `#[class(base=Resource)]`
-- **Godot Nodes**: Use `#[class(base=Control)]` or other node types
-
-### Linter Allowances
-
-The VLC bindings module has specific allowances due to generated code:
-```rust
-#[allow(
-    dead_code,
-    non_camel_case_types,
-    non_upper_case_globals,
-    non_snake_case,
-    clippy::upper_case_acronyms,
-    unused_imports
-)]
-mod vlc {
-    include!(concat!(env!("OUT_DIR"), "/vlc_bindings.rs"));
+#[func]
+fn new_feature(&mut self, param: i32) -> bool {
+    unsafe { libvlc_some_function(self.player_ptr, param) }
 }
 ```
 
-## Key Files to Know
+### Modifying Build Configuration
 
-### `src/lib.rs`
-- Entry point for the GDExtension
-- Registers VLCInstance singleton on `InitLevel::Scene`
-- Unregisters and frees singleton on deinit
+- **Add Rust dependency**: Edit `Cargo.toml` dependencies section
+- **Add VLC compile flag**: Edit `build.rs` (e.g., modify bindgen builder)
+- **Change platform support**: Update `build.rs` target detection (line 24-30)
 
-### `build.rs`
-- Platform-specific library path configuration
-- Generates VLC bindings using bindgen
-- Links against libvlc
+### Debugging Issues
 
-### `demo/addons/godot-vlc/godot_vlc.gdextension`
-- Configures GDExtension for Godot
-- Maps platform/build type to binary paths
-- Lists native library dependencies (VLC DLLs/SOs)
-- Sets custom icons for VLCMedia and VLCMediaPlayer
+1. **Enable VLC debug logging**: In Godot, set Project Settings > VLC > Log Level to "Debug"
+2. **Check VLC initialization**: Verify `VLCInstance` singleton exists
+3. **Inspect media state**: Use `get_state()`, `get_parsed_status()`
+4. **Verify file paths**: Godot uses `res://` paths, converted via `GFile::open()`
+5. **Review callbacks**: Video/audio callbacks run on VLC threads, use `call_deferred()` for Godot calls
 
-### `demo/addons/godot-vlc/format_loader.gd`
-- Custom `ResourceFormatLoader` for automatic media file loading
-- Recognizes 80+ audio/video extensions
-- Returns `VLCMedia` resources when loading recognized media files
+### Updating VLC Version
 
-## Development Workflows
+1. Download new VLC SDK for target platforms
+2. Replace files in `thirdparty/vlc/include/` and `thirdparty/vlc/lib/`
+3. Rebuild to regenerate bindings
+4. Test all features (especially callback signatures)
+5. Update version references in documentation
 
-### Adding New Features
+## Integration with Godot
 
-1. **Identify VLC API**: Check `thirdparty/vlc/include/vlc/` headers
-2. **Add Rust Wrapper**: Create wrapper in appropriate module (`vlc_media.rs`, `vlc_media_player.rs`, etc.)
-3. **Expose to Godot**: Use `#[godot_api]` impl block with `#[func]` attributes
-4. **Document**: Use doc comments (rendered in Godot with `register-docs` feature)
-5. **Test**: Use demo project to verify functionality
-6. **Build**: Run both debug and release builds
+### Using the Extension in Godot
 
-### Modifying VLC Bindings
+```gdscript
+# Load media
+var media = VLCMedia.load_from_file("res://video.mp4")
+# or
+var media = VLCMedia.load_from_mrl("http://example.com/stream.m3u8")
 
-If you need to update VLC headers or change bindgen configuration:
-1. Update headers in `thirdparty/vlc/include/`
-2. Modify `build.rs` bindgen configuration
-3. Run `cargo clean` to force regeneration
-4. Run `cargo build`
+# Create player node
+var player = VLCMediaPlayer.new()
+add_child(player)
+player.media = media
+player.autoplay = true
 
-### Testing
+# Connect signals
+player.playing.connect(_on_playing)
+player.stopped.connect(_on_stopped)
 
-Currently, testing is manual via the demo project:
-1. Open `demo/project.godot` in Godot 4.3+
-2. Test with `demo/test.mp4` or your own media files
-3. Verify playback, controls, and features
-
-### Debugging
-
-**Rust Side:**
-- Build debug version: `./scripts/build_debug.ps1`
-- Use Godot's debug build
-- VLC logs route through `godot_print!`, `godot_warn!`, `godot_error!`
-- Configure `vlc/log_level` in project settings (Debug/Info/Warning/Error/Disabled)
-
-**Godot Side:**
-- Check Godot console for VLC logs
-- Use Godot debugger for GDScript (format_loader.gd)
-
-### Version Bumping
-
-1. Update version in `Cargo.toml`
-2. Rebuild (version is compiled into binaries)
-3. Commit with version tag (e.g., `v1.1.2`)
-4. Push tag for release workflow (if configured)
-
-## Common Pitfalls
-
-### Platform-Specific Issues
-
-- **Windows**: Requires LLVM/Clang for bindgen
-  - Set `LIBCLANG_PATH` environment variable
-  - Use LLVM 11.0 or compatible version
-
-- **Linux**: Requires proper rpath for finding VLC libraries
-  - Build scripts set `-Wl,-rpath,$ORIGIN`
-  - Ensure VLC .so files are in correct relative path
-
-### VLC Library Loading
-
-- Libraries must be bundled with the GDExtension
-- Paths in `godot_vlc.gdextension` must match actual file layout
-- VLC plugins directory is required (not just main libraries)
-
-### Godot API Compatibility
-
-- This extension requires Godot 4.3+ (`api-4-3` feature)
-- Uses `experimental-threads` feature for threading support
-- `reloadable = true` in .gdextension allows hot-reloading during development
-
-### Memory Safety
-
-- VLC uses raw pointers and manual memory management
-- Ensure proper cleanup in Drop implementations
-- Use `unsafe` blocks responsibly with clear comments
-
-## Project Settings
-
-The extension adds custom project settings in Godot:
-
-- **vlc/log_level** (int, enum)
-  - 0 = Debug, 1 = Info, 2 = Warning, 3 = Error, 4 = Disabled
-  - Default: 4 (Error)
-  - Requires restart
-
-- **vlc/arguments** (Array[String])
-  - Command-line arguments passed to libVLC
-  - Default: empty array
-  - Requires restart
-
-## Resource Loading
-
-Media files can be loaded in three ways:
-
-1. **Automatic Resource Loading**
-   - Place media in `res://` folder
-   - Godot auto-loads as VLCMedia via `format_loader.gd`
-   - Supports 80+ extensions
-
-2. **From File Path**
-   ```gdscript
-   var media = VLCMedia.load_from_file("path/to/file.mp4")
-   ```
-
-3. **From MRL**
-   ```gdscript
-   var media = VLCMedia.load_from_mrl("http://example.com/stream")
-   ```
-
-## Editor Configuration
-
-- **EditorConfig**: `.editorconfig` enforces style
-  - 4 space indentation
-  - LF line endings
-  - UTF-8 encoding
-- **Applies to**: All files (Rust, GDScript, etc.)
-
-## Future Considerations
-
-When working on this codebase, keep in mind:
-
-- VLC library version compatibility (currently 3.x)
-- Godot API stability (4.3+ required)
-- Cross-platform consistency
-- Memory safety in FFI code
-- Thread safety (VLC callbacks may run on different threads)
-- Error handling (VLC functions often return NULL/error codes)
-
-## Support and Resources
-
-- **VLC Documentation**: https://www.videolan.org/developers/vlc.html
-- **Godot-Rust Documentation**: https://godot-rust.github.io/
-- **bindgen User Guide**: https://rust-lang.github.io/rust-bindgen/
-
-## Quick Reference
-
-**Build for development:**
-```bash
-./scripts/build_debug.ps1
+# Control playback
+player.play()
+player.set_position(0.5, false)  # Seek to 50%
+player.pause()
+player.stop_async()
 ```
 
-**Build for release:**
-```bash
-./scripts/build_release.ps1
-```
+### Project Settings
 
-**Clean build:**
-```bash
-cargo clean
-cargo build
-```
+- `vlc/log_level` (int): 0=Debug, 1=Info, 2=Warning, 3=Error, 4=Disabled
+- `vlc/arguments` (Array[String]): Custom VLC command-line arguments
+- `vlc/steamdeck_mode` (bool): Enable Steam Deck compatibility mode (auto-detected)
 
-**Check code:**
-```bash
-cargo clippy
-cargo fmt --check
-```
+## Important Files Reference
 
-**View VLC bindings:**
-```bash
-cargo build
-cat target/debug/build/godot-vlc-*/out/vlc_bindings.rs
-```
+- **src/lib.rs:42**: GDExtension entry point
+- **src/vlc_media_player.rs:209-832**: Main player API and callbacks
+- **src/vlc_instance.rs:32**: Global VLC instance getter
+- **build.rs:34-41**: Bindgen configuration
+- **demo/addons/godot-vlc/godot_vlc.gdextension**: Extension manifest
+- **.github/workflows/build.yml**: CI build configuration
+
+## Version History Notes
+
+Recent commits suggest focus on:
+- v1.1.2: Current release
+- Audio player validation (commit b8027de)
+- Arguments setting support (commit bba5ef0)
+
+## Steam Deck Support
+
+The extension includes built-in Steam Deck support:
+
+- **Auto-detection**: Automatically detects Steam Deck environment via environment variables and system files
+- **System VLC**: Can use system-installed VLC instead of bundled libraries to avoid Steam Runtime conflicts
+- **Hardware Acceleration**: Automatically enables hardware acceleration on Steam Deck for better performance
+- **Configuration**: See [STEAMDECK.md](STEAMDECK.md) for detailed setup instructions
+
+### Steam Deck Detection
+
+The plugin detects Steam Deck by checking:
+- `SteamDeck` environment variable
+- `STEAM_RUNTIME` environment variable
+- `/etc/steamos-release` file existence
+
+When detected, it automatically:
+- Enables `vlc/steamdeck_mode` setting
+- Adds `--avcodec-hw=any` for hardware acceleration
+- Logs VLC version for debugging
+
+## Tips for AI Assistants
+
+1. **Always check VLC documentation**: VLC API behavior is documented at videolan.org
+2. **Thread safety**: VLC callbacks run on VLC threads, use `call_deferred()` or `call_thread_safe()` for Godot API calls
+3. **Resource lifecycle**: Media must be parsed before metadata is available
+4. **Platform differences**: Windows uses `.dll`, Linux uses `.so` - maintain both paths
+5. **Godot version**: API requires Godot 4.3+ (see godot_vlc.gdextension:3)
+6. **FFI safety**: Always validate pointers before dereferencing in unsafe blocks
+7. **Build artifacts**: The demo/addons folder is the distribution format, not the root project
+8. **Steam Deck**: For Steam Deck issues, check STEAMDECK.md and verify system VLC installation
+
+## Getting Help
+
+- Godot-rust documentation: https://godot-rust.github.io/
+- VLC LibVLC documentation: https://videolan.org/developers/vlc/doc/doxygen/html/group__libvlc.html
+- Project issues: Check repository issues for known problems
+- Godot GDExtension docs: https://docs.godotengine.org/en/stable/tutorials/scripting/gdextension/
 
 ---
 
-*Last updated: 2025-11-15 for version 1.1.2*
+*This document was generated for AI assistants working on the godot-vlc project. Keep it updated when making significant architectural changes.*

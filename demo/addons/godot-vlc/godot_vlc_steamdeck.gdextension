@@ -1,0 +1,29 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.3
+reloadable = true
+
+[libraries]
+windows.debug.x86_64 = "res://addons/godot-vlc/bin/win-x64/godot_vlc_debug.dll"
+windows.release.x86_64 = "res://addons/godot-vlc/bin/win-x64/godot_vlc.dll"
+
+linux.debug.x86_64 = "res://addons/godot-vlc/bin/linux-x64/libgodot_vlc_debug.so"
+linux.release.x86_64 = "res://addons/godot-vlc/bin/linux-x64/libgodot_vlc.so"
+
+[dependencies]
+windows.x86_64 = {
+	"res://addons/godot-vlc/bin/win-x64/libvlc.dll": "",
+	"res://addons/godot-vlc/bin/win-x64/libvlccore.dll": "",
+	"res://addons/godot-vlc/bin/win-x64/plugins": ""
+}
+# Steam Deck: Use system VLC instead of bundled libraries
+# To use this configuration on Steam Deck:
+# 1. Install VLC: sudo pacman -S vlc
+# 2. Rename this file to godot_vlc.gdextension (backup the original first)
+# 3. Use launch options: LD_LIBRARY_PATH=/usr/lib:/usr/lib64 %command%
+#
+# linux.x86_64 = {}
+
+[icons]
+VLCMedia = "res://addons/godot-vlc/icons/VLCMedia.svg"
+VLCMediaPlayer = "res://addons/godot-vlc/icons/VLCMediaPlayer.svg"
