@@ -48,6 +48,7 @@ pub struct VLCInstance {
 #[godot_api]
 impl IObject for VLCInstance {
     fn init(base: Base<Object>) -> Self {
+        // Setup log level setting
         if !ProjectSettings::singleton().has_setting("vlc/log_level") {
             ProjectSettings::singleton().set_setting("vlc/log_level", &Variant::from(4));
         }
@@ -64,6 +65,7 @@ impl IObject for VLCInstance {
             .try_to()
             .unwrap();
 
+        // Setup arguments setting
         if !ProjectSettings::singleton().has_setting("vlc/arguments") {
             ProjectSettings::singleton().set_setting("vlc/arguments", &Variant::from(Array::<GString>::new()));
         }
@@ -75,16 +77,64 @@ impl IObject for VLCInstance {
         let _ = info.insert("hint_string", format!("{}:", GDEXTENSION_VARIANT_TYPE_STRING));
         ProjectSettings::singleton().add_property_info(&info);
         ProjectSettings::singleton().set_restart_if_changed("vlc/arguments", true);
-        let arguments: Array<GString> = ProjectSettings::singleton()
+
+        // Setup Steam Deck compatibility setting
+        if !ProjectSettings::singleton().has_setting("vlc/steamdeck_mode") {
+            // Auto-detect Steam Deck by checking for SteamOS
+            let is_steamdeck = std::env::var("SteamDeck").is_ok() ||
+                              std::env::var("STEAM_RUNTIME").is_ok() ||
+                              std::path::Path::new("/etc/steamos-release").exists();
+            ProjectSettings::singleton().set_setting("vlc/steamdeck_mode", &Variant::from(is_steamdeck));
+        }
+        ProjectSettings::singleton().set_initial_value("vlc/steamdeck_mode", &Variant::from(false));
+        let mut info = Dictionary::new();
+        let _ = info.insert("name", "vlc/steamdeck_mode");
+        let _ = info.insert("type", VariantType::BOOL);
+        let _ = info.insert("hint", PropertyHint::NONE);
+        let _ = info.insert("hint_string", "Enable compatibility mode for Steam Deck (uses system VLC)");
+        ProjectSettings::singleton().add_property_info(&info);
+        ProjectSettings::singleton().set_restart_if_changed("vlc/steamdeck_mode", true);
+
+        let steamdeck_mode: bool = ProjectSettings::singleton()
+            .get_setting("vlc/steamdeck_mode")
+            .try_to()
+            .unwrap_or(false);
+
+        // Add hardware acceleration for Steam Deck if enabled
+        let mut arguments: Array<GString> = ProjectSettings::singleton()
             .get_setting("vlc/arguments")
             .try_to()
             .unwrap_or_default();
+
+        if steamdeck_mode {
+            godot_print!("VLC: Steam Deck mode enabled - using system VLC with hardware acceleration");
+            // Add hardware acceleration arguments for Steam Deck
+            if !arguments.as_slice().iter().any(|s| s.to_string().contains("avcodec-hw")) {
+                arguments.push("--avcodec-hw=any".into());
+            }
+        }
+
         let args: Vec<CString> = arguments.iter_shared().map(cstring_from_gstring).collect();
         let argc = args.len() as c_int;
         let args: Vec<_> = args.iter().map(|s| s.as_ptr()).collect();
         let argv = args.as_ptr();
 
         let instance = unsafe { vlc::libvlc_new(argc, argv) };
+
+        // Log VLC version for debugging
+        if !instance.is_null() {
+            let version = unsafe {
+                let ver_ptr = vlc::libvlc_get_version();
+                if !ver_ptr.is_null() {
+                    std::ffi::CStr::from_ptr(ver_ptr).to_string_lossy().into_owned()
+                } else {
+                    "unknown".to_string()
+                }
+            };
+            godot_print!("VLC initialized successfully. Version: {}", version);
+        } else {
+            godot_error!("VLC failed to initialize! Make sure VLC is installed on your system.");
+        }
         #[allow(clippy::missing_transmute_annotations)]
         let debug_cb =
             unsafe { Some(mem::transmute(VLCInstance::log_callback_debug as *const ())) };

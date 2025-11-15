@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-**godot-vlc** is a Godot Engine extension that integrates VLC media playback functionality into Godot 4.3+. It's written in Rust using the godot-rust (gdext) bindings and provides native VLC video/audio playback capabilities for Windows and Linux platforms.
+**godot-vlc** is a Godot Engine extension that integrates VLC media playback functionality into Godot 4.3+. It's written in Rust using the godot-rust (gdext) bindings and provides native VLC video/audio playback capabilities for Windows, Linux, and Steam Deck platforms.
 
 - **Language**: Rust (Edition 2021)
 - **Primary Framework**: godot-rust (gdext) 0.3.5
 - **Build System**: Cargo
-- **Target Platforms**: Windows x86_64, Linux x86_64
+- **Target Platforms**: Windows x86_64, Linux x86_64, Steam Deck
 - **License**: GNU LGPL v2.1+
 - **Current Version**: 1.1.2
 
@@ -63,6 +63,8 @@ The extension follows Godot's GDExtension lifecycle:
 - Singleton that owns the libVLC instance
 - Configures logging levels via Project Settings (`vlc/log_level`)
 - Supports custom VLC arguments via Project Settings (`vlc/arguments`)
+- Steam Deck compatibility mode via Project Settings (`vlc/steamdeck_mode`)
+- Auto-detects Steam Deck environment and enables optimizations
 - Provides logging callbacks (debug, info, warning, error)
 - Accessed globally via `vlc_instance::get()`
 
@@ -272,6 +274,7 @@ player.stop_async()
 
 - `vlc/log_level` (int): 0=Debug, 1=Info, 2=Warning, 3=Error, 4=Disabled
 - `vlc/arguments` (Array[String]): Custom VLC command-line arguments
+- `vlc/steamdeck_mode` (bool): Enable Steam Deck compatibility mode (auto-detected)
 
 ## Important Files Reference
 
@@ -289,6 +292,27 @@ Recent commits suggest focus on:
 - Audio player validation (commit b8027de)
 - Arguments setting support (commit bba5ef0)
 
+## Steam Deck Support
+
+The extension includes built-in Steam Deck support:
+
+- **Auto-detection**: Automatically detects Steam Deck environment via environment variables and system files
+- **System VLC**: Can use system-installed VLC instead of bundled libraries to avoid Steam Runtime conflicts
+- **Hardware Acceleration**: Automatically enables hardware acceleration on Steam Deck for better performance
+- **Configuration**: See [STEAMDECK.md](STEAMDECK.md) for detailed setup instructions
+
+### Steam Deck Detection
+
+The plugin detects Steam Deck by checking:
+- `SteamDeck` environment variable
+- `STEAM_RUNTIME` environment variable
+- `/etc/steamos-release` file existence
+
+When detected, it automatically:
+- Enables `vlc/steamdeck_mode` setting
+- Adds `--avcodec-hw=any` for hardware acceleration
+- Logs VLC version for debugging
+
 ## Tips for AI Assistants
 
 1. **Always check VLC documentation**: VLC API behavior is documented at videolan.org
@@ -298,6 +322,7 @@ Recent commits suggest focus on:
 5. **Godot version**: API requires Godot 4.3+ (see godot_vlc.gdextension:3)
 6. **FFI safety**: Always validate pointers before dereferencing in unsafe blocks
 7. **Build artifacts**: The demo/addons folder is the distribution format, not the root project
+8. **Steam Deck**: For Steam Deck issues, check STEAMDECK.md and verify system VLC installation
 
 ## Getting Help
 
